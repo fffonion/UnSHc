@@ -43,6 +43,8 @@
 ###################
 VERSION="0.8"
 
+DATASEGBASE=0x410000
+
 OBJDUMP=`which objdump`
 GREP=`which grep`
 CUT=`which cut`
@@ -148,7 +150,7 @@ function generate_dump() {
 # Update 28/07/2016 : Adding multiple ARC4 offsets support (loop on each candidate)
 function extract_arc4_call_addr(){
 	TAILNUMBER=$1
-	CALLADDRS=$($GREP -Eo "call.*[0-9a-f]{6,}" $DUMPFILE | $GREP -Eo "[0-9a-f]{6,}" | $SORT | $UNIQ -c | $SORT | $GREP -Eo "(14).*[0-9a-f]{6,}" | $GREP -Eo "[0-9a-f]{6,}")
+	CALLADDRS=$($GREP -Eo "jal.*[0-9a-f]{6,}" $DUMPFILE | $GREP -Eo "[0-9a-f]{6,}" | $SORT | $UNIQ -c | $SORT | $GREP -Eo "(14).*[0-9a-f]{6,}" | $GREP -Eo "[0-9a-f]{6,}")
 	TAILMAX=`wc -l <<< "$CALLADDRS"`
         CALLADDR=$(echo $CALLADDRS | $SED "s/ /\n/g" | $TAIL -n $TAILNUMBER | $HEAD -n 1)
         if [[ -z "$CALLADDR" || $TAILNUMBER -gt $TAILMAX ]]; then
@@ -165,21 +167,21 @@ function extract_variables_from_binary(){
         i=2
         # Retrieve ordered list of address var and put it to $CALLADDRFILE
         while [[ $($WC -l < $CALLADDRFILE) -ne 14 ]]; do
-                $GREP -B $i "call.*$CALLADDR" $DUMPFILE | $GREP -v "$CALLADDR" | $GREP -Eo "(0x[0-9a-f]{6,})" > $CALLADDRFILE
+                $GREP -B $i "jal.*$CALLADDR" $DUMPFILE | $GREP addiu | $GREP -Po ",\-*(\d+)"|$GREP -Po "\-*\d+" > $CALLADDRFILE
                 i=$(($i + 1))
-                if [ $i -eq 10 ]; then
+                if [ $i -eq 5 ]; then
                         echo "[-] Unable to extract addresses of 14 arc4 args with ARC4 address call [0x$CALLADDR]..."
                         return;
                 fi
         done
 
         # Initialize the number of line before CALLADDR to looking for sizes of args
-        i=3
+        i=2
         # Retrieve ordered list of size var and append it to $CALLSIZEFILE
         while [[ $($WC -l < $CALLSIZEFILE) -ne 14 ]]; do
-                $GREP -B $i "call.*$CALLADDR" $DUMPFILE | $GREP -v "$CALLADDR" | $GREP -Eo "(0x[0-9a-f]+,)" | $GREP -Eo "(0x[0-9a-f]+)" | $GREP -Ev "0x[0-9a-f]{6,}" > $CALLSIZEFILE
+            $GREP -B $i "jal.*$CALLADDR" $DUMPFILE | $GREP "li.*a1" |$GREP -Po ",\-*(\d+)"|$GREP -Po "\-*\d+" > $CALLSIZEFILE
                 i=$(($i + 1))
-                if [ $i -eq 10 ]; then
+                if [ $i -eq 5 ]; then
                         echo "[-] Unable to extract sizes of 14 arc4 args with ARC4 address call [0x$CALLADDR]..."
                         return;
                 fi
@@ -191,6 +193,8 @@ function extract_variables_from_binary(){
         for (( x = 0; x < ${#LISTOFADDR[*]}; x = x+1 ))
         do
                 i=${LISTOFADDR[$x]}
+                let i=i+DATASEGBASE
+                i=$(printf "0x%x" $i)
                 NBYTES=${LISTOFSIZE[$x]}
         echo -e "\t[$x] Working with var address at offset [$i] ($NBYTES bytes)"
         # Some diferences in assembly.
@@ -306,17 +310,20 @@ function extract_password_from_binary(){
         # Initialize the number of line before CALLADDR to watch
         i=5
         while [[ ( -z "$KEY_ADDR" ) || ( -z "$KEY_SIZE" ) ]]; do
-                $GREP -B $i -m 1 "call.*$CALLADDR" $DUMPFILE | $GREP -v $CALLADDR > $CALLFILE
+                $GREP -B $i -m 1 "jal.*$CALLADDR" $DUMPFILE | $GREP -v $CALLADDR > $CALLFILE
                 #cat $CALLFILE
                 # Adjust these two next line to grep right addr & size value (depending on your architecture)
-                KEY_ADDR=$($GREP -B 3 -m 1 "call" $CALLFILE | $GREP mov | $GREP -oE "0x[0-9a-z]{6,}+" | $HEAD -n 1)
-                KEY_SIZE=$($GREP -B 3 -m 1 "call" $CALLFILE | $GREP mov | $GREP -v $KEY_ADDR | $GREP -v movb | $GREP -oE "0x[0-9a-z]+" | $HEAD -n 1)
+                KEY_ADDR=$($GREP -B 3 -m 1 "jal" $CALLFILE | $GREP addiu | $GREP -oP ",\d+"|$GREP -oP "\d+" | $HEAD -n 1)
+                KEY_SIZE=$($GREP -B 3 -m 1 "jal" $CALLFILE | $GREP li | $GREP -oP ",\d+"|$GREP -oP "\d+"  | $HEAD -n 1)
                 i=$(($i + 1))
                 if [ $i -eq 10 ]; then
                         echo "[-] Error, function call previous first call of arc4() hasn't been identified..."
                         exit_error
                 fi
         done
+        let KEY_ADDR=KEY_ADDR+DATASEGBASE
+        KEY_ADDR=$(printf "0x%x" $KEY_ADDR)
+        KEY_SIZE=$(printf "0x%x" $KEY_SIZE)
         echo -e "\t[+] PWD address found : [$KEY_ADDR]"
         echo -e "\t[+] PWD size found : [$KEY_SIZE]"
 
@@ -680,7 +687,7 @@ else
 fi
 
 # Fill DUMPFILE and STRINGFILE from objdump of the *.sh.x encrypted script
-generate_dump
+#generate_dump
 
 # Find out the most called function. This function is arc4() and there are 14 calls.
 # Then retrieve the data used in each CALLADDR call
@@ -710,6 +717,7 @@ echo "[*] Executing [$TMPBINARY] to decrypt [${BINARY}]"
 
 if [ -z "$OUTPUTFILE" ]; then
         echo "[*] Retrieving initial source code in [${BINARY%.sh.x}.sh]"
+        chmod +x $TMPBINARY
         $TMPBINARY > ${BINARY%.sh.x}.sh
 else
         echo "[*] Retrieving initial source code in [$OUTPUTFILE]"

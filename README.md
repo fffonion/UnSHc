@@ -1,6 +1,8 @@
 # UnSHc
 UnSHc - How to decrypt SHc *.sh.x encrypted file ?
 
+**This version of script only works for MIPS binaries.** For x86/x64, please use the original version https://github.com/yanncam/UnSHc .
+
 # Please note
 
 I will not decrypt any file for people.
@@ -96,3 +98,7 @@ Updated and modernized by Yann CAM
     * https://www.asafety.fr/prog-and-dev/bashshunix-shc-le-compilateur-et-protecteur-de-script-shell/
 * UnSHc (in french) : 
     * https://www.asafety.fr/unshc-the-shc-decrypter/
+
+# Note for UnSHc-MIPS
+
+- This script has been modified to not automatically run `objdump`. You will need to run `objdump -D` and `objdump -s` at first. If your mips platform is not able to run `objdump`, run `mipsel-linux-gnu-objdump` on other platform (for example your x86/x64 desktop or server)
